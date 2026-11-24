@@ -9,6 +9,7 @@
   <img src="https://img.shields.io/badge/runtime-Cloudflare%20Workers-F38020.svg" alt="Cloudflare Workers" />
   <img src="https://img.shields.io/badge/database-Cloudflare%20D1-0051C3.svg" alt="Cloudflare D1" />
   <img src="https://img.shields.io/badge/TypeScript-5.8-3178C6.svg" alt="TypeScript" />
+  <a href="https://linux.do"><img src="https://img.shields.io/badge/LINUX%20DO-Community-E05A2B.svg" alt="LINUX DO Community" /></a>
 </p>
 
 ---
@@ -145,7 +146,7 @@ npm run dev
 
 | 策略 | 标识 | 行为说明 |
 | --- | --- | --- |
-| 剩余额度优先（默认） | `remaining_first` | 优先触发未探测账号采集真实额度，随后始终选择本月剩余 Token 最多的健康账号 |
+| 剩余额度优先（默认） | `remaining_first` | 优先触发未探测账号采集真实额度，随后始终选择本月剩余 Token（无月度头时按分钟剩余 TPM）最多的健康账号 |
 | 均匀轮询 | `round_robin` | 按最久未使用时间顺序轮流分配，均衡分摊分钟级限流压力 |
 | 顺序用完再切 | `sequential` | 按账号优先级（数字越小越优先）依次消耗，限流或耗尽时自动切下一个 |
 
@@ -154,6 +155,10 @@ npm run dev
 - 上游 Mistral Key 仅在 Worker 服务端转发时读取，管理接口与前端界面一律脱敏返回（如 `abcd••••wxyz`）。
 - 看板创建的网关访问密钥（Client API Keys）在数据库中仅存储 SHA-256 哈希，仅创建瞬间展示一次明文，支持单把停用与立即吊销。
 - 关于额度口径：Mistral 官方未向普通 API Key 开放现金充值余额查询接口，看板展示的剩余额度取自官方响应头返回的真实月度/分钟 Token 剩余量，并同步统计经由本网关产生的累计 Token 消耗。
+
+## 社区与鸣谢
+
+本项目开源发布并交流于 [LINUX DO 社区](https://linux.do)，感谢 [LINUX DO](https://linux.do) 社区的开源分享氛围与支持，欢迎各位佬友提出建议或提交 PR。
 
 ## 开源协议
 
