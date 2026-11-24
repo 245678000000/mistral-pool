@@ -1,0 +1,11 @@
+# 本地开发环境变量模板，复制为 .dev.vars 后使用（切勿提交 .dev.vars）
+
+# 必填：管理看板登录密码
+ADMIN_PASSWORD=change-me-admin-password
+
+# 可选：用于签名管理会话 Cookie 的随机密钥（建议 32 字节以上随机字符串）
+SESSION_SECRET=change-me-32-bytes-random-session-secret
+
+# 可选：环境变量兜底网关访问密钥（支持英文逗号分隔多个）
+# 推荐直接登录管理看板，在「网关 API Keys」页面创建、管理与吊销多把客户端密钥
+# PROXY_API_KEY=mp-sk-optional-fallback-key
