@@ -7,9 +7,22 @@ interface SummaryStripProps {
 }
 
 export function SummaryStrip({ summary }: SummaryStripProps) {
-  const monthPct =
-    summary.totalMonthLimit > 0
-      ? Math.min(100, Math.max(0, (summary.totalMonthRemaining / summary.totalMonthLimit) * 100))
+  // 优先展示月度汇总；当账号仅返回分钟 TPM 限额头时自动切换为汇总分钟可用额度
+  const useMonth = summary.keysWithMonthQuota > 0;
+  const useMinute = !useMonth && summary.keysWithMinuteQuota > 0;
+
+  const quotaTitle = useMonth ? '汇总本月剩余 Token' : useMinute ? '汇总分钟剩余额度 (TPM)' : '汇总剩余 Token';
+  const quotaRemaining = useMonth
+    ? summary.totalMonthRemaining
+    : useMinute
+      ? summary.totalMinuteRemaining
+      : null;
+  const quotaLimit = useMonth ? summary.totalMonthLimit : useMinute ? summary.totalMinuteLimit : 0;
+  const quotaCollected = useMonth ? summary.keysWithMonthQuota : summary.keysWithMinuteQuota;
+
+  const pct =
+    quotaRemaining !== null && quotaLimit > 0
+      ? Math.min(100, Math.max(0, (quotaRemaining / quotaLimit) * 100))
       : null;
 
   return (
@@ -31,30 +44,30 @@ export function SummaryStrip({ summary }: SummaryStripProps) {
         </p>
       </div>
 
-      {/* 汇总剩余月度 Token（核心关注点） */}
+      {/* 汇总剩余额度（月度 / 分钟自动适配） */}
       <div className="bg-white border border-[#E6E4DD] rounded-2xl p-4 sm:p-5">
         <div className="flex items-center justify-between text-xs text-[#6B6860] mb-2">
-          <span>汇总本月剩余 Token</span>
+          <span>{quotaTitle}</span>
           <Gauge className="w-4 h-4 text-[#E05A2B]" />
         </div>
         <div className="flex items-baseline justify-between gap-2 tabular-nums">
           <span className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#1C1B18]">
-            {summary.keysWithMonthQuota > 0 ? formatTokens(summary.totalMonthRemaining) : '待刷新'}
+            {quotaRemaining !== null ? formatTokens(quotaRemaining) : '待刷新'}
           </span>
-          {monthPct !== null && (
-            <span className="text-xs font-medium text-[#E05A2B]">{monthPct.toFixed(1)}%</span>
+          {pct !== null && (
+            <span className="text-xs font-medium text-[#E05A2B]">{pct.toFixed(1)}%</span>
           )}
         </div>
-        {monthPct !== null ? (
+        {pct !== null ? (
           <div className="mt-2.5">
             <div className="h-1.5 w-full bg-[#EFECE6] rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full bg-[#E05A2B] transition-all duration-300"
-                style={{ width: `${monthPct}%` }}
+                style={{ width: `${pct}%` }}
               />
             </div>
             <p className="mt-1 text-[11px] text-[#78746B] tabular-nums">
-              已采集 {summary.keysWithMonthQuota}/{summary.enabledKeys} 个 · 总额 {formatTokens(summary.totalMonthLimit)}
+              已采集 {quotaCollected}/{summary.enabledKeys} 个 · 总限额 {formatTokens(quotaLimit)}
             </p>
           </div>
         ) : (

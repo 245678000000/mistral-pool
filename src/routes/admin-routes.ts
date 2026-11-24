@@ -163,6 +163,9 @@ export function createAdminRoutes() {
     let totalMonthLimit = 0;
     let totalMonthRemaining = 0;
     let keysWithMonthQuota = 0;
+    let totalMinuteLimit = 0;
+    let totalMinuteRemaining = 0;
+    let keysWithMinuteQuota = 0;
     let totalAllTimeRequests = 0;
     let totalAllTimeTokens = 0;
 
@@ -174,6 +177,13 @@ export function createAdminRoutes() {
         totalMonthRemaining += k.month_remaining_tokens;
         if (k.month_limit_tokens !== null) {
           totalMonthLimit += k.month_limit_tokens;
+        }
+      }
+      if (k.enabled === 1 && k.minute_remaining_tokens !== null) {
+        keysWithMinuteQuota += 1;
+        totalMinuteRemaining += k.minute_remaining_tokens;
+        if (k.minute_limit_tokens !== null) {
+          totalMinuteLimit += k.minute_limit_tokens;
         }
       }
     }
@@ -196,6 +206,9 @@ export function createAdminRoutes() {
         keysWithMonthQuota,
         totalMonthLimit,
         totalMonthRemaining,
+        keysWithMinuteQuota,
+        totalMinuteLimit,
+        totalMinuteRemaining,
         totalAllTimeRequests,
         totalAllTimeTokens,
         today: todayStats,

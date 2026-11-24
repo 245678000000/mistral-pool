@@ -24,6 +24,16 @@
 - **无感故障转移与自动恢复**：遭遇 `429` 限流、`401/403` 密钥失效或 `5xx` 上游异常时，自动标记冷却并在同一次请求中无缝切换下一个可用账号；冷却到期与跨 UTC 自然月后自动解封。
 - **零服务器费用部署**：前后端一体化打包部署至 Cloudflare Workers + D1 免费套餐，无长回复流式超时限制。
 
+## 界面预览
+
+### 号池与实时剩余额度总览
+
+![Mistral Pool Dashboard](./docs/images/dashboard.png)
+
+### 网关访问密钥管理（Client API Keys）
+
+![Client API Keys Management](./docs/images/client-keys.png)
+
 ## 架构概览
 
 ```text

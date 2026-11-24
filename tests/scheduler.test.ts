@@ -38,12 +38,23 @@ describe('selectCandidateKeys 调度器', () => {
     const keys = [
       makeKey({ id: 1, name: 'k1', month_remaining_tokens: 200_000 }),
       makeKey({ id: 2, name: 'k2', month_remaining_tokens: 900_000 }),
-      makeKey({ id: 3, name: 'k3', month_remaining_tokens: null, status: 'unknown' }),
+      makeKey({ id: 3, name: 'k3', month_remaining_tokens: null, minute_remaining_tokens: null, status: 'unknown' }),
       makeKey({ id: 4, name: 'k4', month_remaining_tokens: 900_000, last_used_at: now - 10_000 }),
     ];
 
     const ordered = selectCandidateKeys(keys, 'remaining_first', now);
     expect(ordered.map((k) => k.id)).toEqual([3, 2, 4, 1]);
+  });
+
+  it('当账号仅返回分钟 TPM 限额（无月度头）时，remaining_first 自动按分钟剩余降序优先使用大号', () => {
+    const keys = [
+      makeKey({ id: 1, name: 'small-500k', month_remaining_tokens: null, minute_remaining_tokens: 499_000 }),
+      makeKey({ id: 2, name: 'large-10m', month_remaining_tokens: null, minute_remaining_tokens: 10_000_000 }),
+      makeKey({ id: 3, name: 'mid-2m', month_remaining_tokens: null, minute_remaining_tokens: 2_000_000 }),
+    ];
+
+    const ordered = selectCandidateKeys(keys, 'remaining_first', now);
+    expect(ordered.map((k) => k.id)).toEqual([2, 3, 1]);
   });
 
   it('round_robin 策略按最久未使用顺序派发', () => {

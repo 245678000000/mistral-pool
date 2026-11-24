@@ -65,22 +65,52 @@ export function KeyCard({
     }
   })();
 
+  // 智能双口径进度条：优先展示官方月度剩余；若该账号层级仅返回分钟 TPM 限额，则主进度条直接展示每分钟剩余 Token
   const hasMonthQuota = item.month_remaining_tokens !== null;
-  const monthPct =
-    hasMonthQuota && item.month_limit_tokens && item.month_limit_tokens > 0
-      ? Math.min(100, Math.max(0, ((item.month_remaining_tokens ?? 0) / item.month_limit_tokens) * 100))
+  const hasMinuteQuota = item.minute_remaining_tokens !== null;
+  const primaryMode = hasMonthQuota ? 'month' : hasMinuteQuota ? 'minute' : 'none';
+
+  const primaryRemaining =
+    primaryMode === 'month'
+      ? item.month_remaining_tokens
+      : primaryMode === 'minute'
+        ? item.minute_remaining_tokens
+        : null;
+  const primaryLimit =
+    primaryMode === 'month'
+      ? item.month_limit_tokens
+      : primaryMode === 'minute'
+        ? item.minute_limit_tokens
+        : null;
+
+  const primaryPct =
+    primaryRemaining !== null && primaryLimit && primaryLimit > 0
+      ? Math.min(100, Math.max(0, (primaryRemaining / primaryLimit) * 100))
       : null;
 
   const progressBarColor =
-    monthPct === null
+    primaryPct === null
       ? 'bg-[#D6D3CB]'
-      : monthPct <= 15
+      : primaryPct <= 15
         ? 'bg-[#DC2626]'
-        : monthPct <= 35
+        : primaryPct <= 35
           ? 'bg-[#D97706]'
           : 'bg-[#E05A2B]';
 
   const totalUsedTokens = item.total_prompt_tokens + item.total_completion_tokens;
+
+  // 第一小格随主进度条互补显示：月度模式时补显示分钟 Token；分钟模式时补显示分钟请求数 RPM
+  const secondaryQuotaLabel = primaryMode === 'minute' ? '分钟剩余请求' : '分钟剩余 Token';
+  const secondaryQuotaValue =
+    primaryMode === 'minute'
+      ? item.minute_remaining_req !== null
+        ? item.minute_limit_req !== null
+          ? `${item.minute_remaining_req} / ${item.minute_limit_req}`
+          : String(item.minute_remaining_req)
+        : '—'
+      : item.minute_remaining_tokens !== null
+        ? formatTokens(item.minute_remaining_tokens)
+        : '—';
 
   return (
     <article
@@ -123,49 +153,53 @@ export function KeyCard({
           </div>
         </div>
 
-        {/* 核心区块：本月剩余额度 */}
+        {/* 核心区块：官方剩余额度（月度 / 分钟自动适配） */}
         <div className="mt-4 p-3.5 rounded-xl bg-[#FAF9F6] border border-[#EFECE6]">
           <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[11px] font-medium text-[#6B6860]">本月剩余 Token</span>
-            {monthPct !== null && (
+            <span className="text-[11px] font-medium text-[#6B6860]">
+              {primaryMode === 'month'
+                ? '本月剩余 Token'
+                : primaryMode === 'minute'
+                  ? '每分钟剩余 Token (TPM)'
+                  : '官方剩余 Token'}
+            </span>
+            {primaryPct !== null && (
               <span className="text-xs font-semibold tabular-nums text-[#1C1B18]">
-                {monthPct.toFixed(1)}%
+                {primaryPct.toFixed(1)}%
               </span>
             )}
           </div>
 
-          {hasMonthQuota ? (
+          {primaryMode !== 'none' ? (
             <>
               <div className="mt-1 flex items-baseline justify-between gap-2 tabular-nums">
                 <span className="text-xl font-semibold tracking-tight text-[#1C1B18]">
-                  {formatTokens(item.month_remaining_tokens)}
+                  {formatTokens(primaryRemaining)}
                 </span>
-                {item.month_limit_tokens !== null && (
-                  <span className="text-xs text-[#78746B]">
-                    / {formatTokens(item.month_limit_tokens)}
-                  </span>
+                {primaryLimit !== null && (
+                  <span className="text-xs text-[#78746B]">/ {formatTokens(primaryLimit)}</span>
                 )}
               </div>
               <div className="mt-2 h-2 w-full bg-[#E9E6DE] rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-300 ${progressBarColor}`}
-                  style={{ width: `${monthPct ?? 100}%` }}
+                  style={{ width: `${primaryPct ?? 100}%` }}
                 />
               </div>
             </>
           ) : (
             <p className="mt-1.5 text-xs text-[#78746B]">
-              尚未采集官方额度，点下方“测活刷新”或发起一次对话自动更新
+              尚未采集官方额度，点下方“测活”或发起一次对话自动更新
             </p>
           )}
         </div>
 
-        {/* 次级指标网格：分钟剩余与累计消耗 */}
+        {/* 次级指标网格 */}
         <div className="mt-3 grid grid-cols-3 gap-2 text-center">
           <div className="rounded-lg bg-[#FAF9F6] px-2 py-1.5">
-            <div className="text-[10px] text-[#78746B]">分钟剩余 Token</div>
+            <div className="text-[10px] text-[#78746B]">{secondaryQuotaLabel}</div>
             <div className="text-xs font-medium text-[#1C1B18] tabular-nums mt-0.5">
-              {item.minute_remaining_tokens !== null ? formatTokens(item.minute_remaining_tokens) : '—'}
+              {secondaryQuotaValue}
             </div>
           </div>
           <div className="rounded-lg bg-[#FAF9F6] px-2 py-1.5">

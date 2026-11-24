@@ -56,6 +56,9 @@ export interface DashboardSummary {
   keysWithMonthQuota: number;
   totalMonthLimit: number;
   totalMonthRemaining: number;
+  keysWithMinuteQuota: number;
+  totalMinuteLimit: number;
+  totalMinuteRemaining: number;
   totalAllTimeRequests: number;
   totalAllTimeTokens: number;
   today: {
