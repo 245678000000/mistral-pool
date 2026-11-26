@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
   Copy,
@@ -21,12 +21,16 @@ import { PlaygroundModal } from './components/PlaygroundModal';
 import { SummaryStrip } from './components/SummaryStrip';
 import type { DashboardPayload, MaskedApiKey, RequestLogRecord, RoutingStrategy } from './types';
 
+// 切回页面时触发自动刷新的最小间隔（30 秒），彻底杜绝后台挂机空耗 D1 行读
+const VISIBILITY_REFRESH_MIN_GAP_MS = 30_000;
+
 export function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState<'pool' | 'client-keys'>('pool');
 
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
+  const [refreshingDashboard, setRefreshingDashboard] = useState(false);
   const [logs, setLogs] = useState<RequestLogRecord[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
@@ -41,6 +45,7 @@ export function App() {
   const [copiedBase, setCopiedBase] = useState(false);
   const [toast, setToast] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const lastFetchedAtRef = useRef<number>(0);
 
   const pushToast = useCallback((text: string, tone: 'ok' | 'err' = 'ok') => {
     setToast({ text, tone });
@@ -50,22 +55,26 @@ export function App() {
   }, []);
 
   const loadDashboard = useCallback(async () => {
+    setRefreshingDashboard(true);
     try {
       const data = await adminApi.getDashboard();
       setDashboard(data);
+      lastFetchedAtRef.current = Date.now();
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setAuthenticated(false);
         return;
       }
       pushToast(err instanceof Error ? err.message : '拉取看板数据失败', 'err');
+    } finally {
+      setRefreshingDashboard(false);
     }
   }, [pushToast]);
 
   const loadLogs = useCallback(async () => {
     setLoadingLogs(true);
     try {
-      const res = await adminApi.getLogs(80);
+      const res = await adminApi.getLogs(50);
       setLogs(res.logs);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -91,23 +100,34 @@ export function App() {
       });
   }, []);
 
-  // 登录后拉取看板与流水，并开启 30 秒静默同步
+  // 登录后拉取一次看板与流水；仅在用户切回标签页且超过间隔时按需刷新，杜绝后台死轮询
   useEffect(() => {
     if (!authenticated) return;
     loadDashboard();
     loadLogs();
-    const poll = window.setInterval(() => {
-      loadDashboard();
-    }, 30_000);
-    return () => window.clearInterval(poll);
+
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        Date.now() - lastFetchedAtRef.current >= VISIBILITY_REFRESH_MIN_GAP_MS
+      ) {
+        loadDashboard();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [authenticated, loadDashboard, loadLogs]);
 
-  // 1 秒全局时钟节拍，驱动冷却倒计时与相对时间流畅刷新
+  // 1 秒全局时钟节拍，仅在本地更新冷却倒计时与相对时间文本（不发任何网络请求）
   useEffect(() => {
     if (!authenticated) return;
     const ticker = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(ticker);
   }, [authenticated]);
+
+  const handleManualRefresh = async () => {
+    await Promise.all([loadDashboard(), activeTab === 'pool' ? loadLogs() : Promise.resolve()]);
+  };
 
   const handleCopyBaseUrl = async () => {
     if (!dashboard) return;
@@ -247,6 +267,17 @@ export function App() {
                 )}
               </button>
             )}
+
+            <button
+              type="button"
+              disabled={refreshingDashboard}
+              onClick={handleManualRefresh}
+              title="手动刷新看板数据"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs text-[#6B6860] hover:text-[#1C1B18] hover:bg-[#EAE7DF] disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshingDashboard ? 'animate-spin text-[#E05A2B]' : ''}`} />
+              <span className="hidden sm:inline">刷新</span>
+            </button>
 
             <button
               type="button"

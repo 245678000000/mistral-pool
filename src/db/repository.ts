@@ -79,10 +79,50 @@ const DEFAULT_SETTINGS: PoolSettings = {
 };
 
 const MAX_RETAINED_LOGS = 500;
+// 每 25 次日志写入才按主键范围裁剪一次旧记录，将单次日志清理的行读开销从 ~1000 行降至均摊 ~1 行
+const LOG_PRUNE_INTERVAL = 25;
+// Worker 进程内 settings 缓存有效期（60 秒），避免每次代理请求都重复读取 settings 表
+const SETTINGS_CACHE_TTL_MS = 60_000;
+
+let cachedSettings: { value: PoolSettings; expiresAt: number } | null = null;
+
+/** 供测试或配置变更后清空进程内设置缓存 */
+export function clearSettingsCache(): void {
+  cachedSettings = null;
+}
+
+/** 计算给定时间戳对应的北京时间自然日键（YYYY-MM-DD） */
+export function getBeijingDayKey(now = Date.now()): string {
+  const tzOffsetMs = 8 * 60 * 60 * 1000;
+  const shifted = new Date(now + tzOffsetMs);
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(shifted.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/** 判断 SQLite / D1 错误是否为表尚未创建 */
+function isMissingDailyStatsTableError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.toLowerCase().includes('no such table') && msg.toLowerCase().includes('daily_stats');
+}
+
+const CREATE_DAILY_STATS_SQL = `CREATE TABLE IF NOT EXISTS daily_stats (
+  day TEXT PRIMARY KEY,
+  requests INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+)`;
 
 /** 基于 Cloudflare D1 的持久化仓储实现 */
 export class D1PoolRepository implements PoolRepository {
   constructor(private readonly db: D1Database) {}
+
+  private async ensureDailyStatsTable(): Promise<void> {
+    await this.db.prepare(CREATE_DAILY_STATS_SQL).run();
+  }
 
   async listKeys(): Promise<ApiKeyRecord[]> {
     const result = await this.db
@@ -362,7 +402,7 @@ export class D1PoolRepository implements PoolRepository {
   }
 
   async insertLogAndPrune(entry: Omit<RequestLogRecord, 'id'>): Promise<void> {
-    await this.db
+    const insertRes = await this.db
       .prepare(
         `INSERT INTO request_logs
            (key_id, key_name, client_key_name, endpoint, model, is_stream, status_code, latency_ms,
@@ -387,19 +427,45 @@ export class D1PoolRepository implements PoolRepository {
       )
       .run();
 
-    // 保留最近 500 条流水，防止长期运行后 D1 表体积膨胀
-    await this.db
-      .prepare(
-        `DELETE FROM request_logs
-         WHERE id NOT IN (
-           SELECT id FROM request_logs ORDER BY id DESC LIMIT ?
-         )`,
-      )
-      .bind(MAX_RETAINED_LOGS)
-      .run();
+    // 同步原子累加当日汇总表，避免看板每次刷新扫描整张 request_logs
+    const dayKey = getBeijingDayKey(entry.created_at);
+    const upsertDaily = () =>
+      this.db
+        .prepare(
+          `INSERT INTO daily_stats (day, requests, prompt_tokens, completion_tokens, total_tokens, updated_at)
+           VALUES (?, 1, ?, ?, ?, ?)
+           ON CONFLICT(day) DO UPDATE SET
+             requests = requests + 1,
+             prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+             completion_tokens = completion_tokens + excluded.completion_tokens,
+             total_tokens = total_tokens + excluded.total_tokens,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(dayKey, entry.prompt_tokens, entry.completion_tokens, entry.total_tokens, entry.created_at)
+        .run();
+
+    try {
+      await upsertDaily();
+    } catch (err) {
+      if (isMissingDailyStatsTableError(err)) {
+        await this.ensureDailyStatsTable();
+        await upsertDaily();
+      } else {
+        throw err;
+      }
+    }
+
+    // 低频主键范围裁剪：仅每 25 次写入清理一次超出最近 500 条的历史日志，彻底消除全表 NOT IN 扫描
+    const lastRowId = Number(insertRes.meta?.last_row_id ?? 0);
+    if (lastRowId > MAX_RETAINED_LOGS && lastRowId % LOG_PRUNE_INTERVAL === 0) {
+      await this.db
+        .prepare('DELETE FROM request_logs WHERE id <= ?')
+        .bind(lastRowId - MAX_RETAINED_LOGS)
+        .run();
+    }
   }
 
-  async listLogs(limit = 100): Promise<RequestLogRecord[]> {
+  async listLogs(limit = 50): Promise<RequestLogRecord[]> {
     const safeLimit = Math.min(Math.max(limit, 1), MAX_RETAINED_LOGS);
     const result = await this.db
       .prepare('SELECT * FROM request_logs ORDER BY id DESC LIMIT ?')
@@ -409,23 +475,31 @@ export class D1PoolRepository implements PoolRepository {
   }
 
   async getTodayStats(now = Date.now()): Promise<TodayStats> {
-    // 以北京时间（UTC+8）0 点作为当日统计起点
-    const tzOffsetMs = 8 * 60 * 60 * 1000;
-    const shifted = new Date(now + tzOffsetMs);
-    const dayStartUtc =
-      Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - tzOffsetMs;
+    const dayKey = getBeijingDayKey(now);
+    const queryDaily = () =>
+      this.db
+        .prepare(
+          `SELECT requests,
+                  prompt_tokens AS promptTokens,
+                  completion_tokens AS completionTokens,
+                  total_tokens AS totalTokens
+           FROM daily_stats
+           WHERE day = ?`,
+        )
+        .bind(dayKey)
+        .first<TodayStats>();
 
-    const row = await this.db
-      .prepare(
-        `SELECT COUNT(*) AS requests,
-                COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
-                COALESCE(SUM(completion_tokens), 0) AS completionTokens,
-                COALESCE(SUM(total_tokens), 0) AS totalTokens
-         FROM request_logs
-         WHERE created_at >= ?`,
-      )
-      .bind(dayStartUtc)
-      .first<TodayStats>();
+    let row: TodayStats | null = null;
+    try {
+      row = await queryDaily();
+    } catch (err) {
+      if (isMissingDailyStatsTableError(err)) {
+        await this.ensureDailyStatsTable();
+        row = null;
+      } else {
+        throw err;
+      }
+    }
 
     return {
       requests: Number(row?.requests ?? 0),
@@ -436,6 +510,11 @@ export class D1PoolRepository implements PoolRepository {
   }
 
   async getSettings(): Promise<PoolSettings> {
+    const now = Date.now();
+    if (cachedSettings && cachedSettings.expiresAt > now) {
+      return { ...cachedSettings.value };
+    }
+
     const result = await this.db.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>();
     const map = new Map((result.results ?? []).map((row) => [row.key, row.value]));
 
@@ -446,8 +525,10 @@ export class D1PoolRepository implements PoolRepository {
         : DEFAULT_SETTINGS.routing_strategy;
 
     const probe_model = map.get('probe_model')?.trim() || DEFAULT_SETTINGS.probe_model;
+    const value: PoolSettings = { routing_strategy, probe_model };
 
-    return { routing_strategy, probe_model };
+    cachedSettings = { value, expiresAt: now + SETTINGS_CACHE_TTL_MS };
+    return { ...value };
   }
 
   async updateSettings(partial: Partial<PoolSettings>): Promise<PoolSettings> {
@@ -472,6 +553,7 @@ export class D1PoolRepository implements PoolRepository {
         .bind(partial.probe_model.trim(), now)
         .run();
     }
+    clearSettingsCache();
     return this.getSettings();
   }
 }
