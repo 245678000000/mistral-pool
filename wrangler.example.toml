@@ -5,6 +5,7 @@ name = "mistral-pool"
 main = "src/index.ts"
 compatibility_date = "2025-05-01"
 compatibility_flags = ["nodejs_compat"]
+# 未绑定自定义域名时保留 true；绑定自己的域名并配置 Cloudflare WAF 后，强烈建议改为 false 防止绕过防火墙直打 workers.dev
 workers_dev = true
 
 [assets]
